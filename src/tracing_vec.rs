@@ -1,4 +1,5 @@
 use crate::index::*;
+use serde::{ Serialize, Deserialize };
 
 
 
@@ -24,13 +25,13 @@ use crate::index::*;
 /// aliasing, one can take a reference to the data itself. This index then performs just one
 /// lookup.
 ///
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TracingVec<X> {
     mem: Vec<Trace<X>>,
     snapshots: Vec<Vec<usize>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct Trace<X> {
     pub val: X,
     pub birth: usize,
@@ -151,7 +152,7 @@ impl<X> TracingVec<X> {
     }
 
     pub fn try_replace(&mut self, indices: Vec<impl Into<TracingIndex>>, val: X) -> Result<Vec<TimelessIndex>, IndexError> {
-        let (first, removed) = self.try_remove_all(indices)?;
+        let (indices, removed) = self.try_remove_all(indices)?;
 
         let birth = self.pseudotime();
 
@@ -161,12 +162,12 @@ impl<X> TracingVec<X> {
         self.snapshots
             .last_mut()
             .unwrap()
-            .insert(first, tracing_index);
+            .insert(*indices.first().unwrap(), tracing_index);
 
         Ok(removed)
     }
 
-    fn try_remove_all(&mut self, indices: Vec<impl Into<TracingIndex>>) -> Result<(usize, Vec<TimelessIndex>), IndexError> {
+    fn try_remove_all(&mut self, indices: Vec<impl Into<TracingIndex>>) -> Result<(Vec<usize>, Vec<TimelessIndex>), IndexError> {
         if indices.is_empty() {
             return Err(IndexError::NoIndicesProvided);
         }
@@ -181,9 +182,19 @@ impl<X> TracingVec<X> {
             absolute_indices.push((position, abs));
         }
 
-        absolute_indices.sort_by(|a, b| a.1.cmp(&b.1));
 
-        let first = absolute_indices[0].1;
+        let mut last_pos = absolute_indices.first().unwrap().1;
+        let mut interleaved_positions = vec![last_pos];
+
+        for (_, abs) in absolute_indices.iter().copied() {
+            for pos in last_pos .. abs {
+                interleaved_positions.push(pos);
+            }
+
+            last_pos = abs + 1;
+        }
+
+        absolute_indices.sort_by(|a, b| a.1.cmp(&b.1));
 
         let mut removed = vec![None; absolute_indices.len()];
         let snapshot = self.new_snapshot();
@@ -195,7 +206,7 @@ impl<X> TracingVec<X> {
             removed[position] = Some(TimelessIndex { pos });
         }
 
-        Ok((first, removed.into_iter().map(Option::unwrap).collect()))
+        Ok((interleaved_positions, removed.into_iter().map(Option::unwrap).collect()))
     }
 
     // NOTE: Returns the newly added index.
@@ -223,7 +234,23 @@ impl<X: Clone> TracingVec<X> {
     }
 
     pub fn try_replace_with(&mut self, indices: Vec<impl Into<TracingIndex>>, f: impl FnOnce(Vec<X>) -> X) -> Result<TimedIndex, IndexError> {
-        let (first, removed) = self.try_remove_all(indices)?;
+        self.try_replace_choose(indices, |indices| indices[0], f)
+    }
+
+    pub fn try_replace_at_last_with(&mut self, indices: Vec<impl Into<TracingIndex>>, f: impl FnOnce(Vec<X>) -> X) -> Result<TimedIndex, IndexError> {
+        self.try_replace_choose(indices, |indices| *indices.last().unwrap(), f)
+    }
+
+    fn try_replace_choose(
+        &mut self,
+        indices: Vec<impl Into<TracingIndex>>,
+        choose: impl FnOnce(Vec<usize>) -> usize,
+        f: impl FnOnce(Vec<X>) -> X,
+    ) -> Result<TimedIndex, IndexError> {
+
+        let (interleaved_positions, removed) = self.try_remove_all(indices)?;
+
+        let chosen = choose(interleaved_positions);
 
         let removed =
         removed
@@ -245,9 +272,9 @@ impl<X: Clone> TracingVec<X> {
         self.snapshots
             .last_mut()
             .unwrap()
-            .insert(first, tracing_index);
+            .insert(chosen, tracing_index);
 
-        let pos = first;
+        let pos = chosen;
         let pseudotime = birth;
 
         Ok(TimedIndex { pos, pseudotime })
@@ -399,18 +426,18 @@ impl<X> TracingVec<X> {
             .into_iter()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &X> {
+    pub fn iter(&self) -> impl Iterator<Item = &X> + DoubleEndedIterator + ExactSizeIterator + Clone {
         self.latest()
             .into_iter()
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut X> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut X> + DoubleEndedIterator + ExactSizeIterator {
         self.latest_mut()
             .into_iter()
     }
 
 
-    pub fn indices(&self) -> impl Iterator<Item = TimedIndex> {
+    pub fn indices(&self) -> impl Iterator<Item = TimedIndex> + DoubleEndedIterator + ExactSizeIterator + Clone {
         let pseudotime = self.pseudotime();
 
         self.snapshots
@@ -424,27 +451,27 @@ impl<X> TracingVec<X> {
             .into_iter()
     }
 
-    pub fn iter_indices(&self) -> impl Iterator<Item = (TimedIndex, &X)> {
+    pub fn iter_indices(&self) -> impl Iterator<Item = (TimedIndex, &X)> + DoubleEndedIterator + ExactSizeIterator + Clone {
         self.indices().zip(self.iter())
     }
 
-    pub fn iter_mut_indices(&mut self) -> impl Iterator<Item = (TimedIndex, &mut X)> {
+    pub fn iter_mut_indices(&mut self) -> impl Iterator<Item = (TimedIndex, &mut X)> + DoubleEndedIterator + ExactSizeIterator {
         self.indices().zip(self.iter_mut())
     }
 
 
-    pub fn timeless_indices(&self) -> impl Iterator<Item = TimelessIndex> {
+    pub fn timeless_indices(&self) -> impl Iterator<Item = TimelessIndex> + DoubleEndedIterator + ExactSizeIterator + Clone {
         self.indices()
             .map(|timed| self.into_timeless(timed).unwrap())
             .collect::<Vec<_>>()
             .into_iter()
     }
 
-    pub fn iter_timeless_indices(&self) -> impl Iterator<Item = (TimelessIndex, &X)> {
+    pub fn iter_timeless_indices(&self) -> impl Iterator<Item = (TimelessIndex, &X)> + DoubleEndedIterator {
         self.timeless_indices().zip(self.iter())
     }
 
-    pub fn iter_mut_timeless_indices(&mut self) -> impl Iterator<Item = (TimelessIndex, &mut X)> {
+    pub fn iter_mut_timeless_indices(&mut self) -> impl Iterator<Item = (TimelessIndex, &mut X)> + DoubleEndedIterator {
         self.timeless_indices().zip(self.iter_mut())
     }
 }
@@ -494,6 +521,18 @@ impl<X> TracingVec<X> {
 
             pos: self.latest_index(index)?,
         })
+    }
+
+
+    pub fn is_before(&self, before: impl Into<TracingIndex>, after: impl Into<TracingIndex>) -> Result<bool, IndexError> {
+        let before = self.latest_index(before)?;
+        let after = self.latest_index(after)?;
+
+        Ok(before <= after)
+    }
+
+    pub fn indices_eq(&self, a: impl Into<TracingIndex>, b: impl Into<TracingIndex>) -> Result<bool, IndexError> {
+        Ok(self.into_timeless(a)? == self.into_timeless(b)?)
     }
 
 

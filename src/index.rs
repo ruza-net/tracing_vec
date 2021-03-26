@@ -1,4 +1,5 @@
 use std::fmt;
+use serde::{ Serialize, Deserialize };
 
 
 
@@ -6,7 +7,7 @@ use std::fmt;
 /// to the underlying data, but retains information about the particular position and thus
 /// supports a kind of "interior mutability".
 ///
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct TimedIndex {
     pub(in super) pseudotime: usize,
 
@@ -16,14 +17,14 @@ pub struct TimedIndex {
 /// An index pointing just to some data in a [`TracingVec`]. It doesn't retain information about
 /// its movement.
 ///
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct TimelessIndex {
     pub(in super) pos: usize,
 }
 
 /// A generic index into a tracing vector.
 ///
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum TracingIndex {
     Timed(TimedIndex),
     Timeless(TimelessIndex),
